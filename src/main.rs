@@ -49,10 +49,24 @@ async fn main() {
         }
     }
 
+    // Check for IP-related arguments
+    let mut expose_ip = String::from("0.0.0.0");
+    let mut port = 3000;
+    let args: Vec<String> = env::args().collect();
+    for (i, arg) in args.iter().enumerate() {
+        if arg == "--local" {
+            expose_ip = String::from("127.0.0.1");
+        }
+
+        if arg == "--port" {
+            port = args[i + 1].parse::<u16>().unwrap();
+        }
+    }
+
     // Create a reference to the app state (will be shared across threads/tokio tasks, so needs to be thread safe)
     let state_ref = Arc::new(Mutex::new(app_state));
 
-    // build our application with a route
+    // Build router
     let app = Router::new()
         // `GET /` goes to `root`
         .route("/", get(root))
@@ -61,11 +75,14 @@ async fn main() {
         // Add the app state to the router
         .with_state(state_ref);
 
-    // run our app with hyper
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:3000")
+    // Create a listener
+    let listener = tokio::net::TcpListener::bind(format!("{}:{}", expose_ip, port))
         .await
         .unwrap();
+
     tracing::debug!("listening on {}", listener.local_addr().unwrap());
+
+    // Serve app with hyper
     axum::serve(listener, app).await.unwrap();
 }
 
