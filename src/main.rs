@@ -113,8 +113,17 @@ async fn collate(State(state): State<Arc<Mutex<AppState>>>, body: String) -> imp
         match state.df.as_ref() {
             Some(df) => {
                 // Concatenate the current state with the new DataFrame
-                let new_df = df.vstack(df).unwrap();
-
+                let new_df = match df.vstack(df) {
+                    Ok(df) => df,
+                    Err(e) => {
+                        error!("Error concatenating DataFrames: {:?}", e);
+                        return Json(json!({
+                            "status": "error",
+                            "message": e.to_string()
+                        }));
+                    }
+                };
+                
                 // Update the app state
                 state.df = Some(new_df);
 
