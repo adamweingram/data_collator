@@ -1,9 +1,3 @@
-//! Run with
-//!
-//! ```not_rust
-//! cargo run -p example-readme
-//! ```
-
 use std::{env, error::Error, io::Cursor, path::PathBuf};
 
 use axum::{
@@ -86,7 +80,7 @@ async fn main() {
     axum::serve(listener, app).await.unwrap();
 }
 
-// basic handler that responds with a static string
+// Health check, essentially
 async fn root() -> impl IntoResponse {
     trace!("Root endpoint (GET /) called. Returning operational status.");
     
