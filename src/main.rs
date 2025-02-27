@@ -104,7 +104,7 @@ async fn collate(State(state): State<Arc<Mutex<AppState>>>, body: String) -> imp
     let mut df = CsvReader::new(Cursor::new(body_bytes)).finish().unwrap();
 
     // Acquire a lock on the app state within a scope
-    let debug_text;
+    let output_csv_text;
     let output_file;
     {
         let mut state = state.lock().await;
@@ -130,7 +130,7 @@ async fn collate(State(state): State<Arc<Mutex<AppState>>>, body: String) -> imp
                 // Update the app state
                 state.df = Some(new_df);
 
-                debug_text = get_df_as_csv(state.df.as_mut().unwrap(), true);
+                output_csv_text = get_df_as_csv(state.df.as_mut().unwrap(), true);
 
                 // Print the DataFrame
                 trace!("Concatted. New state:\n{:?}", state.df.as_ref().unwrap());
@@ -139,7 +139,7 @@ async fn collate(State(state): State<Arc<Mutex<AppState>>>, body: String) -> imp
                 // If the current state is None, set it to the new DataFrame (don't need to concat!)
                 state.df = Some(df.clone());
                 
-                debug_text = get_df_as_csv(state.df.as_mut().unwrap(), true);
+                output_csv_text = get_df_as_csv(state.df.as_mut().unwrap(), true);
 
                 trace!("Brand new, no concat was needed. New state:\n{:?}", state.df.as_ref().unwrap());
             }
@@ -156,7 +156,7 @@ async fn collate(State(state): State<Arc<Mutex<AppState>>>, body: String) -> imp
     Json(json!({
         "status": "success",
         "wrote_to_file": wrote_to_file,
-        "debug": debug_text,
+        "csv_string": output_csv_text
     }))
 }
 
@@ -208,7 +208,7 @@ async fn aggregate(State(state): State<Arc<Mutex<AppState>>>, body: String) -> i
     let operation = AggregateOperation::Sum;
 
     // Acquire a lock on the app state within a scope
-    let debug_text;
+    let output_csv_text;
     let output_file;
     {
         let mut state = state.lock().await;
@@ -218,12 +218,12 @@ async fn aggregate(State(state): State<Arc<Mutex<AppState>>>, body: String) -> i
 
         // Get the current state
         match state.df.as_ref() {
-            Some(df) => {
+            Some(state_df) => {
                 // Get the first column header
                 let key = df.get_columns()[0].name().to_string();
 
                 // Concatenate the current state with the new DataFrame
-                let cat_df = match df.vstack(df) {
+                let cat_df = match state_df.vstack(&df) {
                     Ok(df) => df,
                     Err(e) => {
                         error!("Error concatenating DataFrames: {:?}", e);
@@ -233,6 +233,9 @@ async fn aggregate(State(state): State<Arc<Mutex<AppState>>>, body: String) -> i
                         }));
                     }
                 };
+
+                // Print the DataFrame
+                trace!("Aggregated. New state:\n{:?}", cat_df);
 
                 // Update the DataFrame according to the aggregate operation joining on the first column value 
                 let updated_df = match operation {
@@ -261,7 +264,7 @@ async fn aggregate(State(state): State<Arc<Mutex<AppState>>>, body: String) -> i
                 // Update the app state
                 state.df = Some(updated_df);
 
-                debug_text = get_df_as_csv(state.df.as_mut().unwrap(), true);
+                output_csv_text = get_df_as_csv(state.df.as_mut().unwrap(), true);
 
                 // Print the DataFrame
                 trace!("Concatted. New state:\n{:?}", state.df.as_ref().unwrap());
@@ -270,7 +273,7 @@ async fn aggregate(State(state): State<Arc<Mutex<AppState>>>, body: String) -> i
                 // If the current state is None, set it to the new DataFrame (don't need to concat or do any aggregation!)
                 state.df = Some(df.clone());
                 
-                debug_text = get_df_as_csv(state.df.as_mut().unwrap(), true);
+                output_csv_text = get_df_as_csv(state.df.as_mut().unwrap(), true);
 
                 trace!("Brand new, no concat was needed. New state:\n{:?}", state.df.as_ref().unwrap());
             }
@@ -287,7 +290,7 @@ async fn aggregate(State(state): State<Arc<Mutex<AppState>>>, body: String) -> i
     Json(json!({
         "status": "success",
         "wrote_to_file": wrote_to_file,
-        "debug": debug_text,
+        "csv_string": output_csv_text
     }))
 }
 
