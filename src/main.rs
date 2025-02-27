@@ -7,6 +7,7 @@ use serde_json::json;
 use log::{error, trace};
 use polars::prelude::*;
 use tokio::sync::Mutex;
+use tracing_subscriber::fmt::format;
 
 #[derive(Clone, Debug)]
 struct AppState {
@@ -66,6 +67,8 @@ async fn main() {
         .route("/", get(root))
         // `POST /collate` goes to `collate`
         .route("/collate", post(collate))
+        // `POST /aggregate` goes to `aggregate`
+        .route("/aggregate", post(aggregate))
         // Add the app state to the router
         .with_state(state_ref);
 
@@ -123,7 +126,7 @@ async fn collate(State(state): State<Arc<Mutex<AppState>>>, body: String) -> imp
                         }));
                     }
                 };
-                
+
                 // Update the app state
                 state.df = Some(new_df);
 
@@ -158,7 +161,138 @@ async fn collate(State(state): State<Arc<Mutex<AppState>>>, body: String) -> imp
 }
 
 
-// Append a DataFrame to a CSV file. If it doesn't exist, create it.
+#[derive(Debug, Clone)]
+enum AggregateOperation {
+    Sum,
+    Mean,
+}
+
+#[inline(always)]
+fn group_by_sum(df: &DataFrame, key: &str) -> PolarsResult<DataFrame> {
+    let mut summed = df.group_by([key])?
+    .sum()?;
+
+    let mut out = summed.clone();
+
+    for col in summed.get_column_names() {
+        if col.to_string().ends_with("_sum") {
+            let new_name = col.to_string().replace("_sum", "");
+
+            let proper_name = PlSmallStr::from(new_name.clone());
+
+            // Rename the column
+            out.rename(col, proper_name)?;
+        }
+    }
+
+    Ok(out)
+}
+
+#[inline(always)]
+fn group_by_mean(df: &DataFrame, key: &str) -> PolarsResult<DataFrame> {
+    Err(PolarsError::ComputeError("Mean is not supported yet".into()))
+}
+
+// handler that accepts a POST request with a CSV payload, updates the state according to keys, and returns the updated DataFrame as a CSV string
+#[axum_macros::debug_handler]
+async fn aggregate(State(state): State<Arc<Mutex<AppState>>>, body: String) -> impl IntoResponse {
+    trace!("Aggregating message: {:?}", body);
+
+    // Convert the body into a vector of bytes
+    let body_bytes = body.as_bytes();
+
+    // Use Polars to read the CSV
+    let mut df = CsvReader::new(Cursor::new(body_bytes)).finish().unwrap();
+
+    // HACK: Only support sum for now
+    let operation = AggregateOperation::Sum;
+
+    // Acquire a lock on the app state within a scope
+    let debug_text;
+    let output_file;
+    {
+        let mut state = state.lock().await;
+
+        // Set the output file
+        output_file = state.output_file.clone();
+
+        // Get the current state
+        match state.df.as_ref() {
+            Some(df) => {
+                // Get the first column header
+                let key = df.get_columns()[0].name().to_string();
+
+                // Concatenate the current state with the new DataFrame
+                let cat_df = match df.vstack(df) {
+                    Ok(df) => df,
+                    Err(e) => {
+                        error!("Error concatenating DataFrames: {:?}", e);
+                        return Json(json!({
+                            "status": "error",
+                            "message": e.to_string()
+                        }));
+                    }
+                };
+
+                // Update the DataFrame according to the aggregate operation joining on the first column value 
+                let updated_df = match operation {
+                    AggregateOperation::Sum => match group_by_sum(&cat_df, key.as_str()) {
+                        Ok(df) => df,
+                        Err(e) => {
+                            error!("Error aggregating DataFrame: {:?}", e);
+                            return Json(json!({
+                                "status": "error",
+                                "message": e.to_string()
+                            }));
+                        }
+                    },
+                    AggregateOperation::Mean => match group_by_mean(&cat_df, key.as_str()) {
+                        Ok(df) => df,
+                        Err(e) => {
+                            error!("Error aggregating DataFrame: {:?}", e);
+                            return Json(json!({
+                                "status": "error",
+                                "message": e.to_string()
+                            }));
+                        }
+                    }
+                };
+                
+                // Update the app state
+                state.df = Some(updated_df);
+
+                debug_text = get_df_as_csv(state.df.as_mut().unwrap(), true);
+
+                // Print the DataFrame
+                trace!("Concatted. New state:\n{:?}", state.df.as_ref().unwrap());
+            },
+            None => {
+                // If the current state is None, set it to the new DataFrame (don't need to concat or do any aggregation!)
+                state.df = Some(df.clone());
+                
+                debug_text = get_df_as_csv(state.df.as_mut().unwrap(), true);
+
+                trace!("Brand new, no concat was needed. New state:\n{:?}", state.df.as_ref().unwrap());
+            }
+        };
+    }
+
+    // Directly append the new DataFrame to the output file (if it has been set)
+    let mut wrote_to_file = String::from("no");
+    if let Some(output_file) = &output_file {
+        append_df_to_csv(&mut df, output_file).await.unwrap();
+        wrote_to_file = format!("yes: {:?}", output_file);
+    }
+
+    Json(json!({
+        "status": "success",
+        "wrote_to_file": wrote_to_file,
+        "debug": debug_text,
+    }))
+}
+
+
+    // Append a DataFrame to a CSV file. If it doesn't exist, create it.
 async fn append_df_to_csv(df: &mut DataFrame, output_file: &PathBuf) -> Result<(), Box<dyn Error>> {
     let mut file = std::fs::File::create(output_file)?;
 
