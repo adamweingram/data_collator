@@ -66,7 +66,7 @@ Check if the service is running.
 }
 ```
 
-#### POST /collate
+#### POST `/collate`
 
 Submit CSV data to be collated with the existing dataset.
 
@@ -74,16 +74,34 @@ Submit CSV data to be collated with the existing dataset.
 > The very first row in every CSV sent will be interpreted as the header! Make sure you take this into account to avoid data loss.
 
 **Request Body:**
-Raw CSV data as text
+Raw CSV data as text with a header taking up the first row.
 
 **Response:**
 ```json
 {
   "status": "success",
   "wrote_to_file": "yes: \"output.csv\"",
-  "debug": "CSV content of the current dataset"
+  "csv_string": "CSV content of the current dataset"
 }
 ```
+
+#### POST `/aggregate`
+
+Submit CSV data to be aggregated with the existing dataset. Right now, the aggregation operation is sum. In a future version, it will be possible to specify the desired operation, but this is not yet implemented.
+
+> [!CAUTION]
+> As with `/collate`, the very first row in every CSV sent will be interpreted as the header! Make sure you take this into account to avoid data loss.
+
+**Request Body:**
+Raw CSV data as text with a header taking up the first row.
+
+**Response:**
+```json
+{
+  "status": "success",
+  "wrote_to_file": "yes: \"output.csv\"",
+  "csv_string": "CSV content of the current dataset"
+}
 
 ### Examples
 
@@ -91,6 +109,8 @@ Raw CSV data as text
 
 ```bash
 # Submit some CSV data
-curl -X POST http://localhost:3000/collate -d "column1,column2
-value1,value2"
+curl -X POST http://localhost:3000/collate -d "column1,column2\nvalue1,value2"
+
+# Aggregate some CSV data
+curl -X POST http://localhost:3000/aggregate -d "column1,column2\nvalue1,value2"
 ```
